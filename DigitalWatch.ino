@@ -7,8 +7,8 @@
 #include "freertos/queue.h"
 #include "freertos/FreeRTOS.h"
 
-#define LOCAL_SSID              "MyNet"
-#define LOCAL_PASS              "9431154249"
+#define LOCAL_SSID              "SSID"
+#define LOCAL_PASS              "PASS"
 
 #define SIDE_SWITCH_PIN         0
 #define FRONT_SWITCH_PIN        1
