@@ -1,9 +1,14 @@
 #include "ui.h"
 #include <lvgl.h>
+#include <WiFi.h>
+#include <ESPmDNS.h>
 #include <TFT_eSPI.h>
 #include "freertos/task.h"
-#include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/FreeRTOS.h"
+
+#define LOCAL_SSID              "MyNet"
+#define LOCAL_PASS              "9431154249"
 
 #define SIDE_SWITCH_PIN         0
 #define FRONT_SWITCH_PIN        1
@@ -49,10 +54,24 @@
 #define SERVER_TASK_PRIORITY    2
 #define SERVER_TASK_STACK_DEPTH 20480
 
+#define HK_CORE                 CORE_1
+#define HK_TASK_DELAY           500
+#define HK_TASK_PRIORITY        5
+#define HK_TASK_STACK_DEPTH     2048
+
 TFT_eSPI tft = TFT_eSPI(LCD_WIDTH, LCD_HEIGHT);
 
 void lcdTask(void *arg);
 void switchTask(void *arg);
+void serverTask(void *arg);
+void housekeepingTask(void *arg);
+
+void dispTimeOnUART(void);
+
+/* WiFi event callbacks */
+void WiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info);
+void WiFiConnLost(WiFiEvent_t event, WiFiEventInfo_t info);
+void WiFiConnReestablished(WiFiEvent_t event, WiFiEventInfo_t info);
 
 void dispInit(void);
 static void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p);
@@ -60,19 +79,19 @@ static void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_col
 static void IRAM_ATTR adcISR(void);
 static void IRAM_ATTR switchISR(void);
 
+struct tm currTime;
+bool switchIsrFlag = false;
 uint8_t adcPin[1] = {FRONT_SWITCH_PIN};
 uint8_t adcPinCount = sizeof(adcPin) / sizeof(uint8_t);
-bool switchIsrFlag = false;
 
 static lv_disp_draw_buf_t draw_buf;
 static lv_color_t buf[LCD_WIDTH * LCD_HEIGHT / 10];
 
-TaskHandle_t lcdTaskHandle = NULL, switchTaskHandle = NULL;
+TaskHandle_t lcdTaskHandle = NULL, switchTaskHandle = NULL,
+              serverTaskHandle = NULL, hkTaskHandle = NULL;
 
 void setup()
 {
-    Serial.begin(115200);
-
     xTaskCreatePinnedToCore(lcdTask,
                             "LCD Task",
                             LCD_TASK_STACK_DEPTH,
@@ -88,6 +107,22 @@ void setup()
                             SWITCH_TASK_PRIORITY,
                             &switchTaskHandle,
                             SWITCH_CORE);
+    
+    xTaskCreatePinnedToCore(serverTask,
+                            "Server Task",
+                            SERVER_TASK_STACK_DEPTH,
+                            NULL,
+                            SERVER_TASK_PRIORITY,
+                            &serverTaskHandle,
+                            SERVER_CORE);
+
+    xTaskCreatePinnedToCore(housekeepingTask,
+                            "HK Task",
+                            HK_TASK_STACK_DEPTH,
+                            NULL,
+                            HK_TASK_PRIORITY,
+                            &hkTaskHandle,
+                            HK_CORE);                        
 }
 
 /* Kept only to satisfy IDE requirements */
@@ -116,7 +151,6 @@ void switchTask(void *arg)
 
     if(analogContinuousStart())
         Serial.println("\n ADC started \n");
-
     else
         Serial.println("\n ADC failed to start \n");
 
@@ -143,6 +177,110 @@ void switchTask(void *arg)
 
         vTaskDelay(SWITCH_TASK_DELAY / portTICK_PERIOD_MS);
     }
+}
+
+void serverTask(void *arg)
+{
+    const int gmtOffsetSec = 3600 * 5.5;
+    const int daylightOffsetSec = 0;
+
+    /* Configure WiFi events */
+    WiFi.onEvent(WiFiGotIP, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_GOT_IP);
+    WiFi.onEvent(WiFiConnLost, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+    WiFi.onEvent(WiFiConnReestablished, WiFiEvent_t::ARDUINO_EVENT_WIFI_STA_CONNECTED);
+  
+    WiFi.begin(LOCAL_SSID, LOCAL_PASS);
+    while (WiFi.status() != WL_CONNECTED) 
+    {
+      Serial.print(".");
+      vTaskDelay(250 / portTICK_PERIOD_MS);
+    }
+  
+    if (MDNS.begin("ESP32Box")) 
+    {
+        Serial.println("MDNS responder started");
+    }
+
+    configTime(gmtOffsetSec, daylightOffsetSec, "pool.ntp.org");
+    time_t now = time(nullptr);
+  
+    while(now < 24 * 3600) 
+    {
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+        Serial.print(".");
+        now = time(nullptr);
+    }
+
+    Serial.println("NTP synchronized");
+    time(&now);
+
+    dispTimeOnUART();
+
+    vTaskSuspend(NULL);
+
+    while(1)
+    {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
+
+void housekeepingTask(void *arg)
+{
+    static struct tm previousTime;
+
+    Serial.begin(115200);
+
+    while(1)
+    {
+        if(getLocalTime(&currTime)) 
+            if(currTime.tm_sec != previousTime.tm_sec)
+            {
+                previousTime = currTime;
+                lv_arc_set_value(ui_secondArc, currTime.tm_sec);
+            }
+        else
+            Serial.println("Failed to get time");
+
+        vTaskDelay(HK_TASK_DELAY / portTICK_PERIOD_MS);
+    }
+}
+
+void WiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+}
+
+void WiFiConnLost(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+    Serial.println("Disconnected from WiFi access point");
+    Serial.print("WiFi lost connection. Reason: ");
+    Serial.println(info.wifi_sta_disconnected.reason);
+    Serial.println("Trying to Reconnect");
+    WiFi.begin(LOCAL_SSID, LOCAL_PASS);
+}
+
+void WiFiConnReestablished(WiFiEvent_t event, WiFiEventInfo_t info)
+{
+    Serial.println("Connected to WiFi access point");
+    Serial.print("SSID: ");
+    Serial.println(WiFi.SSID());
+    Serial.print("signal strength (RSSI):");
+    Serial.print(WiFi.RSSI());
+    Serial.println(" dBm");
+}
+
+void dispTimeOnUART(void)
+{
+    char timeStr[40];
+
+    if(getLocalTime(&currTime)) 
+    {
+        strftime(timeStr, sizeof(timeStr), "%A, %B %d %Y %H:%M:%S", &currTime);
+        Serial.println(timeStr);
+    }
+    else 
+        Serial.println("Failed to obtain local time");
 }
 
 void dispInit(void)
