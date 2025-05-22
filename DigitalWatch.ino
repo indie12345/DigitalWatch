@@ -7,19 +7,20 @@
 #include "freertos/queue.h"
 #include "freertos/FreeRTOS.h"
 
-#define LOCAL_SSID              "SSID"
-#define LOCAL_PASS              "PASS"
+#define LOCAL_SSID              "MyNet"
+#define LOCAL_PASS              "9431154249"
 
+/* HW connections for switches */
 #define SIDE_SWITCH_PIN         0
 #define FRONT_SWITCH_PIN        1
+
+/* Parameters for ADC */
 #define CONVERSION_FOR_AVG      8
 #define NO_OF_SAMPLES           8
 #define MIN_NO_OF_SAME_SAMPLES  4
 #define SAMPLING_FREQ           5000
-#define RIGHT_BUTTON            1000
-#define MIDDLE_BUTTON           2500
-#define LEFT_BUTTON             3000
 
+/* Front buttons related parameters */
 #define NOTHING_PRESSED         0
 #define LEFT_PRESSED            1
 #define MIDDLE_PRESSED          2
@@ -29,31 +30,39 @@
 #define MIDDLE_RIGHT_PRESSED    6
 #define ALL_PRESSED             7
 
+/* WiFi Status */
 #define WIFI_CONNECTED          1
 #define WIFI_DISCONNECTED       0
 
+/* Processor cores */
 #define CORE_0                  0
 #define CORE_1                  1
 
+/* LCD related parameters */
 #define LCD_WIDTH               320
 #define LCD_HEIGHT              240
 #define LCD_ROTATION            3
+#define LCD_BUFFER_SIZE         (LCD_WIDTH * LCD_HEIGHT / 10)
 
+/* Parameters for LCD Task */
 #define LCD_CORE                CORE_1
 #define LCD_TASK_DELAY          1
 #define LCD_TASK_PRIORITY       3
 #define LCD_TASK_STACK_DEPTH    4096
 
+/* Parameters for Switch Task */
 #define SWITCH_CORE             CORE_1
 #define SWITCH_TASK_DELAY       20
 #define SWITCH_TASK_PRIORITY    2
 #define SWITCH_TASK_STACK_DEPTH 4096
 
+/* Parameters for Server Task */
 #define SERVER_CORE             CORE_0
 #define SERVER_TASK_DELAY       1
 #define SERVER_TASK_PRIORITY    2
 #define SERVER_TASK_STACK_DEPTH 20480
 
+/* Parameters for Housekeeping Task */
 #define HK_CORE                 CORE_1
 #define HK_TASK_DELAY           500
 #define HK_TASK_PRIORITY        5
@@ -66,8 +75,6 @@ void switchTask(void *arg);
 void serverTask(void *arg);
 void housekeepingTask(void *arg);
 
-void dispTimeOnUART(void);
-
 /* WiFi event callbacks */
 void WiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info);
 void WiFiConnLost(WiFiEvent_t event, WiFiEventInfo_t info);
@@ -76,16 +83,18 @@ void WiFiConnReestablished(WiFiEvent_t event, WiFiEventInfo_t info);
 void dispInit(void);
 static void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p);
 
+void dispTimeOnUART(void);
+
 static void IRAM_ATTR adcISR(void);
 static void IRAM_ATTR switchISR(void);
 
 struct tm currTime;
 bool switchIsrFlag = false;
 uint8_t adcPin[1] = {FRONT_SWITCH_PIN};
-uint8_t adcPinCount = sizeof(adcPin) / sizeof(uint8_t);
+const uint8_t adcPinCount = sizeof(adcPin) / sizeof(uint8_t);
 
 static lv_disp_draw_buf_t draw_buf;
-static lv_color_t buf[LCD_WIDTH * LCD_HEIGHT / 10];
+static lv_color_t buf[LCD_BUFFER_SIZE];
 
 TaskHandle_t lcdTaskHandle = NULL, switchTaskHandle = NULL,
               serverTaskHandle = NULL, hkTaskHandle = NULL;
@@ -216,6 +225,8 @@ void serverTask(void *arg)
 
     dispTimeOnUART();
 
+    vTaskResume(hkTaskHandle);
+
     vTaskSuspend(NULL);
 
     while(1)
@@ -226,21 +237,47 @@ void serverTask(void *arg)
 
 void housekeepingTask(void *arg)
 {
+    static bool normalArcMode = true;
     static struct tm previousTime;
 
     Serial.begin(115200);
 
+    vTaskSuspend(NULL);
+    
+    if(currTime.tm_min & 0x01)
+    {
+        normalArcMode = false;
+        lv_arc_set_mode(ui_secondArc, LV_ARC_MODE_REVERSE);
+    }
+    else
+    {
+        normalArcMode = true;
+        lv_arc_set_mode(ui_secondArc, LV_ARC_MODE_NORMAL);
+    }
+
     while(1)
     {
-        if(getLocalTime(&currTime)) 
-            if(currTime.tm_sec != previousTime.tm_sec)
+        getLocalTime(&currTime);
+        if(currTime.tm_sec != previousTime.tm_sec)
+        {
+            if((currTime.tm_sec == 0) && !(currTime.tm_min & 0x01))
             {
-                previousTime = currTime;
-                lv_arc_set_value(ui_secondArc, currTime.tm_sec);
+                normalArcMode = true;
+                lv_arc_set_mode(ui_secondArc, LV_ARC_MODE_NORMAL);
             }
-        else
-            Serial.println("Failed to get time");
+            else if((currTime.tm_sec == 0) && (currTime.tm_min & 0x01))
+            {
+                normalArcMode = false;
+                lv_arc_set_mode(ui_secondArc, LV_ARC_MODE_REVERSE);
+            }
 
+            if(normalArcMode == true)
+                lv_arc_set_value(ui_secondArc, currTime.tm_sec);
+            else
+                lv_arc_set_value(ui_secondArc, (60 - currTime.tm_sec));    
+
+            previousTime = currTime;
+        }
         vTaskDelay(HK_TASK_DELAY / portTICK_PERIOD_MS);
     }
 }
@@ -295,7 +332,7 @@ void dispInit(void)
     tft.setRotation(LCD_ROTATION);
     
     lv_init();
-    lv_disp_draw_buf_init(&draw_buf, buf, NULL, (LCD_WIDTH * LCD_HEIGHT / 10));
+    lv_disp_draw_buf_init(&draw_buf, buf, NULL, LCD_BUFFER_SIZE);
     
     /*Initialize the display*/
     static lv_disp_drv_t disp_drv;

@@ -36,16 +36,17 @@ void ui_Screen2_screen_init(void)
     lv_arc_set_range(ui_secondArc, 0, 60);
     lv_arc_set_value(ui_secondArc, 53);
     lv_arc_set_bg_angles(ui_secondArc, 0, 360);
+    lv_arc_set_mode(ui_secondArc, LV_ARC_MODE_REVERSE);
     lv_arc_set_rotation(ui_secondArc, 270);
     lv_obj_set_style_arc_color(ui_secondArc, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_arc_opa(ui_secondArc, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_arc_width(ui_secondArc, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_arc_rounded(ui_secondArc, false, LV_PART_MAIN | LV_STATE_DEFAULT);
-
+    
     lv_obj_set_style_bg_main_stop(ui_secondArc, 0, LV_PART_KNOB | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_grad_stop(ui_secondArc, 255, LV_PART_KNOB | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_grad_dir(ui_secondArc, LV_GRAD_DIR_VER, LV_PART_KNOB | LV_STATE_DEFAULT);
-
+    
     lv_obj_add_event_cb(ui_secondArc, ui_event_secondArc, LV_EVENT_ALL, NULL);
     uic_secondArc = ui_secondArc;
 
