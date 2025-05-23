@@ -42,7 +42,7 @@
 #define LCD_WIDTH               320
 #define LCD_HEIGHT              240
 #define LCD_ROTATION            3
-#define LCD_BUFFER_SIZE         (LCD_WIDTH * LCD_HEIGHT / 10)
+#define LCD_BUFFER_SIZE         (LCD_WIDTH * LCD_HEIGHT / 2)
 
 /* Parameters for LCD Task */
 #define LCD_CORE                CORE_1
@@ -141,6 +141,8 @@ void lcdTask(void *arg)
 {
     dispInit();
 
+    //vTaskSuspend(NULL);
+
     while(1)
     {
         lv_timer_handler();
@@ -225,7 +227,9 @@ void serverTask(void *arg)
 
     dispTimeOnUART();
 
+    /* Resume other tasks */
     vTaskResume(hkTaskHandle);
+    //vTaskResume(lcdTaskHandle);
 
     vTaskSuspend(NULL);
 
@@ -237,7 +241,9 @@ void serverTask(void *arg)
 
 void housekeepingTask(void *arg)
 {
-    static bool normalArcMode = true;
+    static uint16_t seconds, hours; 
+    static uint16_t tempHours = 0, tempSeconds = 0;
+    static bool normalArcMode = true, secondsDone = false, hoursDone = false;
     static struct tm previousTime;
 
     Serial.begin(115200);
@@ -255,30 +261,71 @@ void housekeepingTask(void *arg)
         lv_arc_set_mode(ui_secondArc, LV_ARC_MODE_NORMAL);
     }
 
+    seconds = (currTime.tm_min * 60) + currTime.tm_sec;
+    hours = (currTime.tm_hour * 300) + (currTime.tm_min * 5);
+    //lv_arc_set_value(ui_minuteArc, seconds);
+    //lv_arc_set_value(ui_hourArc, hours);
+
     while(1)
     {
         getLocalTime(&currTime);
-        if(currTime.tm_sec != previousTime.tm_sec)
+
+        if(tempSeconds >= seconds)
         {
-            if((currTime.tm_sec == 0) && !(currTime.tm_min & 0x01))
-            {
-                normalArcMode = true;
-                lv_arc_set_mode(ui_secondArc, LV_ARC_MODE_NORMAL);
-            }
-            else if((currTime.tm_sec == 0) && (currTime.tm_min & 0x01))
-            {
-                normalArcMode = false;
-                lv_arc_set_mode(ui_secondArc, LV_ARC_MODE_REVERSE);
-            }
-
-            if(normalArcMode == true)
-                lv_arc_set_value(ui_secondArc, currTime.tm_sec);
-            else
-                lv_arc_set_value(ui_secondArc, (60 - currTime.tm_sec));    
-
-            previousTime = currTime;
+            secondsDone = true;
         }
-        vTaskDelay(HK_TASK_DELAY / portTICK_PERIOD_MS);
+        else
+        {
+            tempSeconds += 10;
+        }
+
+        if(tempHours >= hours)
+        {
+            hoursDone = true;
+        }
+        else
+        {
+            tempHours += 10;
+        }
+
+        if(hoursDone && secondsDone)
+        {
+            if(currTime.tm_sec != previousTime.tm_sec)
+            {
+                if((currTime.tm_sec == 0) && !(currTime.tm_min & 0x01))
+                {
+                    normalArcMode = true;
+                    lv_arc_set_mode(ui_secondArc, LV_ARC_MODE_NORMAL);
+                }
+                else if((currTime.tm_sec == 0) && (currTime.tm_min & 0x01))
+                {
+                    normalArcMode = false;
+                    lv_arc_set_mode(ui_secondArc, LV_ARC_MODE_REVERSE);
+                }
+
+                if(normalArcMode == true)
+                    lv_arc_set_value(ui_secondArc, currTime.tm_sec);
+                else
+                    lv_arc_set_value(ui_secondArc, (60 - currTime.tm_sec));
+            
+                previousTime = currTime;
+                
+                seconds = (currTime.tm_min * 60) + currTime.tm_sec;
+                hours = ((currTime.tm_hour % 12) * 300) + (currTime.tm_min * 5);
+            
+                lv_arc_set_value(ui_hourArc, hours);
+                lv_arc_set_value(ui_minuteArc, seconds);
+            }
+            vTaskDelay(HK_TASK_DELAY / portTICK_PERIOD_MS);
+        }
+        else
+        {
+            lv_arc_set_value(ui_hourArc, tempHours);
+            lv_arc_set_value(ui_minuteArc, tempSeconds);
+            vTaskDelay(5 / portTICK_PERIOD_MS);
+            seconds = (currTime.tm_min * 60) + currTime.tm_sec;
+            hours = (currTime.tm_hour * 300) + (currTime.tm_min * 5);
+        }
     }
 }
 

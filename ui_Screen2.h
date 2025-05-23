@@ -16,6 +16,10 @@ extern void ui_Screen2_screen_destroy(void);
 extern lv_obj_t * ui_Screen2;
 extern void ui_event_secondArc(lv_event_t * e);
 extern lv_obj_t * ui_secondArc;
+extern void ui_event_minuteArc(lv_event_t * e);
+extern lv_obj_t * ui_minuteArc;
+extern void ui_event_hourArc(lv_event_t * e);
+extern lv_obj_t * ui_hourArc;
 // CUSTOM VARIABLES
 extern lv_obj_t * uic_secondArc;
 
